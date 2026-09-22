@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install requests
+      - name: Install packages
         run: pip install requests feedparser
 
       - name: Run Market Radar
