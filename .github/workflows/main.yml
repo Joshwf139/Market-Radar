@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install packages
-        run: pip install requests feedparser google-genai
+        run: pip install requests feedparser google-genai yfinance
 
       - name: Run Market Radar
         env:
