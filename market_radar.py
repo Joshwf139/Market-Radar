@@ -100,7 +100,7 @@ URL: {story['link']}
     stories_text = "\n".join(numbered_stories)
 
     prompt = f"""
-You are the filtering system for a personal market-intelligence alert tool.
+You are the filtering system for a LONG-ONLY market intelligence alert tool.
 
 Your job is NOT to give investment advice and NOT to say whether someone should
 buy or sell anything.
@@ -177,6 +177,11 @@ Stories:
                                 "confidence": {
                                     "type": "string",
                                     "enum": ["HIGH", "MEDIUM", "LOW"],
+                                    - price_setup: a short description of the potential entry zone, upside
+  targets, and invalidation level IF reliable price information is available.
+  Do not invent prices.
+- timeframe: the expected trading horizon for the setup, such as
+  "1-3 days", "1-2 weeks", or "No clear timeframe".
                                 },
                             },
                             "required": [
