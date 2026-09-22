@@ -5,8 +5,15 @@ on:
   schedule:
     - cron: "*/5 * * * *"
 
+permissions:
+  contents: write
+
+concurrency:
+  group: market-radar
+  cancel-in-progress: false
+
 jobs:
-  test:
+  radar:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,3 +34,17 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python market_radar.py
+
+      - name: Save radar memory
+        run: |
+          git config user.name "Market Radar Bot"
+          git config user.email "market-radar-bot@users.noreply.github.com"
+
+          if [ -f seen_stories.json ]; then
+            git add seen_stories.json
+
+            if ! git diff --cached --quiet; then
+              git commit -m "Update radar memory"
+              git push
+            fi
+          fi
