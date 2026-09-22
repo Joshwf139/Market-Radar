@@ -8,7 +8,7 @@ from google import genai
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -19,9 +19,13 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
+MEMORY_FILE = "seen_stories.json"
+
+MAX_SEEN_STORIES = 2000
+
 
 # ============================================================
-# NEWS FEEDS
+# NEWS SOURCES
 # ============================================================
 
 FEEDS = [
@@ -57,11 +61,64 @@ FEEDS = [
 
 
 # ============================================================
+# MEMORY
+# ============================================================
+
+def load_memory():
+
+    if not os.path.exists(MEMORY_FILE):
+
+        return set()
+
+    try:
+
+        with open(
+            MEMORY_FILE,
+            "r",
+            encoding="utf-8",
+        ) as file:
+
+            data = json.load(file)
+
+        return set(data)
+
+    except Exception as e:
+
+        print(
+            f"Could not load memory: {e}"
+        )
+
+        return set()
+
+
+def save_memory(seen):
+
+    # Keep the file from becoming enormous
+    recent = list(seen)[-MAX_SEEN_STORIES:]
+
+    with open(
+        MEMORY_FILE,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            recent,
+            file,
+            indent=2,
+        )
+
+
+# ============================================================
 # TELEGRAM
 # ============================================================
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{BOT_TOKEN}/sendMessage"
+    )
 
     response = requests.post(
         url,
@@ -75,7 +132,9 @@ def send_telegram(message):
 
     response.raise_for_status()
 
-    print("Telegram alert sent.")
+    print(
+        "Telegram alert sent."
+    )
 
 
 # ============================================================
@@ -88,26 +147,32 @@ def collect_stories():
 
     for category, feed_url in FEEDS:
 
-        print(f"Checking {category}...")
+        print(
+            f"Checking {category}..."
+        )
 
         try:
-            feed = feedparser.parse(feed_url)
+
+            feed = feedparser.parse(
+                feed_url
+            )
 
             for entry in feed.entries[:10]:
 
-                title = entry.get("title", "").strip()
-                link = entry.get("link", "").strip()
-                published = entry.get("published", "").strip()
+                title = entry.get(
+                    "title",
+                    "",
+                ).strip()
 
-                source_name = ""
+                link = entry.get(
+                    "link",
+                    "",
+                ).strip()
 
-                source = entry.get("source")
-
-                if isinstance(source, dict):
-                    source_name = source.get("title", "")
-
-                if not source_name:
-                    source_name = "Google News"
+                published = entry.get(
+                    "published",
+                    "",
+                ).strip()
 
                 if title and link:
 
@@ -117,98 +182,142 @@ def collect_stories():
                             "title": title,
                             "link": link,
                             "published": published,
-                            "source": source_name,
                         }
                     )
 
         except Exception as e:
 
             print(
-                f"Could not read {category}: {e}"
+                f"Feed error: {e}"
             )
 
-    # Remove duplicate URLs
     unique = {}
 
     for story in stories:
-        unique[story["link"]] = story
 
-    return list(unique.values())
+        unique[
+            story["link"]
+        ] = story
+
+    return list(
+        unique.values()
+    )
 
 
 # ============================================================
-# GEMINI ANALYSIS
+# AI ANALYSIS
 # ============================================================
 
 def analyze_with_ai(stories):
 
-    numbered_stories = []
+    numbered = []
 
-    for i, story in enumerate(stories, start=1):
+    for i, story in enumerate(
+        stories,
+        start=1,
+    ):
 
-        numbered_stories.append(
+        numbered.append(
             f"""
 STORY {i}
 
-Category:
-{story['category']}
+Category: {story['category']}
 
-Source:
-{story['source']}
+Title: {story['title']}
 
-Title:
-{story['title']}
+Published: {story['published']}
 
-Published:
-{story['published']}
-
-URL:
-{story['link']}
+URL: {story['link']}
 """
         )
 
     stories_text = "\n".join(
-        numbered_stories
+        numbered
     )
 
     prompt = f"""
-You are the filtering system for a LONG-ONLY market intelligence alert tool.
+You are an extremely selective LONG-ONLY market intelligence system.
 
-The user manually buys stocks through a brokerage and does not short stocks.
+The user manually buys stocks and does not short stocks.
 
-Your job is to identify ONLY NEW developments that could reasonably be
-POSITIVE for a publicly traded company or sector.
+Your most important instruction:
 
-Do NOT give investment advice.
+WHEN IN DOUBT, RETURN NO ALERT.
 
-Do NOT tell the user to buy or sell anything.
+The user does NOT want a constant stream of market news.
 
-Do NOT claim that a stock will definitely rise.
-
-Your job is to identify potentially positive market catalysts and explain
-why they may matter.
+They only want an alert when there is an unusually strong, concrete,
+new and potentially positive catalyst for a specific publicly traded
+company or sector.
 
 ============================================================
-ALERT CRITERIA
+REQUIRED CONDITIONS
 ============================================================
 
-Alert when there is a concrete NEW development such as:
+A story should normally satisfy ALL of these:
 
-- A company receives a major government contract.
-- A company receives favorable regulatory treatment.
-- A tariff or trade policy could benefit a specific company or domestic sector.
-- A competitor faces a regulatory or supply-chain disadvantage.
-- A company announces a major partnership.
-- A company announces a major product or technology breakthrough.
-- A company receives important government approval.
-- A major supply disruption could benefit an identifiable company.
-- Oil or commodity developments could benefit identifiable companies.
-- Positive developments involving semiconductors, AI, energy, defense,
-  infrastructure, manufacturing, or other major sectors.
-- A geopolitical development creates a clearly identifiable positive catalyst
-  for a public company or sector.
-- A major policy announcement creates a plausible positive catalyst for
-  a specific public company.
+1. It describes a concrete NEW development.
+
+2. The development is potentially positive for a specific company
+   or clearly identifiable sector.
+
+3. The connection between the event and the beneficiary is strong.
+
+4. The development could materially affect the company's business,
+   addressable market, costs, supply, regulation, revenue opportunity,
+   or competitive position.
+
+5. The information comes from a credible source or is sufficiently
+   concrete to justify high confidence.
+
+6. The catalyst appears materially more important than ordinary
+   daily market news.
+
+============================================================
+HIGH-VALUE CATALYSTS
+============================================================
+
+Pay particular attention to rare developments such as:
+
+- Major government contracts
+- Major regulatory approvals
+- Important new government policy
+- Tariff changes that clearly create beneficiaries
+- Major semiconductor export-policy changes
+- Major AI infrastructure developments
+- Major energy supply changes
+- Major defense contracts
+- Large strategic partnerships
+- Major technology breakthroughs
+- Entry into a large previously inaccessible market
+- Major competitor disruption
+- Important supply shortages benefiting a specific producer
+- Government programs creating significant new demand
+- Major acquisitions or strategic transactions
+- Other developments that could materially change a company's economics
+
+============================================================
+ASYMMETRIC CATALYSTS
+============================================================
+
+Also identify rare "ASYMMETRIC" situations.
+
+An asymmetric situation is NOT a claim that the stock will rise 4x,
+5x, 10x, or any other amount.
+
+Instead, it means the event could potentially have an unusually large
+effect on the company's future economics relative to its current size.
+
+Examples include:
+
+- A small public company gaining access to a huge new market
+- A major regulatory approval for a company with a small existing business
+- A transformative government contract
+- A technology breakthrough with a very large addressable market
+- A supply disruption that strongly benefits one identifiable producer
+- A major competitor losing access to an important market
+
+Only classify something as ASYMMETRIC when the evidence is unusually strong.
 
 ============================================================
 DO NOT ALERT
@@ -216,129 +325,129 @@ DO NOT ALERT
 
 Do NOT alert on:
 
-- Negative company news.
-- Market crashes.
-- Generic political commentary.
-- Generic stock-market recaps.
-- Opinion pieces.
-- Old news.
-- Stories that merely mention Trump or another politician.
-- Stories that merely mention tariffs without a concrete new development.
-- Stories where the positive market connection is unclear.
-- Stories where the only reason for an alert is that a stock went up.
-- General economic news with no identifiable beneficiary.
-- Rumors with no credible supporting information.
-- Predictions about what politicians or companies might do without evidence
-  of an actual new development.
+- Ordinary stock price movements
+- Market recaps
+- Generic political news
+- Generic Trump commentary
+- Opinions
+- Analyst commentary alone
+- Rumors
+- Weak speculation
+- Old news
+- Negative catalysts
+- Companies merely mentioned in a story
+- Stories where the beneficiary is unclear
+- Stories where the market relevance is weak
+- Stories that merely say a stock "could rise"
+- Stories that merely say a stock "is rallying"
 
 ============================================================
-IMPORTANT
+CONFIDENCE
 ============================================================
 
-A story must contain a concrete EVENT.
+Only select stories with very high confidence.
 
-The event must be NEW or DEVELOPING.
+Use:
 
-Do not confuse "the stock rose" with a positive catalyst.
+95-100 = exceptional confidence
+90-94 = very strong confidence
+Below 90 = DO NOT ALERT
 
-Prefer primary sources and high-quality financial sources.
+The confidence score represents confidence that:
 
-Do not assume a company benefits merely because it operates in the same
-industry.
+- the event is real and new
+- the event is material
+- the company/sector connection is reasonable
+- the catalyst is potentially positive
 
-Only identify companies when the connection to the event is reasonably clear.
-
-Do not invent ticker symbols.
-
-For example, if a story discusses a tariff affecting a specific product,
-identify companies only when there is a reasonable basis for saying that
-the policy could benefit those companies.
+It does NOT represent the probability that a stock will rise.
 
 ============================================================
 TICKERS
 ============================================================
 
-Only include US-listed stock ticker symbols.
+Only include US-listed ticker symbols.
 
-Examples:
+Never invent a ticker.
 
-NVIDIA = NVDA
-Apple = AAPL
-Amazon = AMZN
-Microsoft = MSFT
-Tesla = TSLA
-
-Only provide a ticker when you are reasonably confident it is correct.
-
-If there is no clearly identifiable public-company beneficiary, use:
-
-[]
+Only include a ticker if the company is clearly connected to the event.
 
 ============================================================
 OUTPUT
 ============================================================
 
-For every selected story return:
+Return no more than ONE alert.
+
+If nothing meets the threshold, return:
+
+{{"alerts":[]}}
+
+If something qualifies, return:
 
 - story_number
 - alert_title
+- catalyst_type
 - importance
 - event
 - affected_companies_or_sectors
 - tickers
 - market_relevance
 - confidence
+- asymmetric
 
-importance must be one of:
+catalyst_type must be one of:
 
-HIGH
-MEDIUM
-LOW
+"POLICY"
+"REGULATION"
+"CONTRACT"
+"TECHNOLOGY"
+"SUPPLY"
+"ENERGY"
+"GEOPOLITICS"
+"COMPETITOR"
+"PARTNERSHIP"
+"OTHER"
 
-confidence must be one of:
+importance must be:
 
-HIGH
-MEDIUM
-LOW
+"HIGH"
 
-The alert_title should be short and describe the actual catalyst.
+confidence must be an integer from 90 to 100.
+
+asymmetric must be either:
+
+true
+false
+
+The alert_title should be extremely concise.
 
 Examples:
 
-"NEW TARIFF ANNOUNCED"
-"MAJOR GOVERNMENT CONTRACT"
 "NEW CHIP EXPORT POLICY"
-"OIL SUPPLY DISRUPTION"
+"MAJOR DEFENSE CONTRACT"
 "REGULATORY APPROVAL"
 "MAJOR AI PARTNERSHIP"
+"NEW MARKET ACCESS"
 
-The event should explain what actually happened.
+The event should be 1-2 concise sentences.
 
-The market_relevance should explain why the event could potentially benefit
-the identified companies or sectors.
+The market_relevance should be 1 concise sentence.
 
-Do not say:
+Do NOT provide investment advice.
 
-"Buy NVDA."
+Do NOT say "buy".
 
-Do not say:
+Do NOT say "sell".
 
-"NVDA will rise."
+Do NOT say "this stock will rise".
 
-Instead say something like:
-
-"This could improve demand for US-based semiconductor suppliers."
-
-Select no more than 3 stories.
-
-If there are no genuinely positive market catalysts, return an empty list.
-
-Stories:
+============================================================
+STORIES
+============================================================
 
 {stories_text}
 """
 
-    # Retry temporary Gemini server failures
     for attempt in range(3):
 
         try:
@@ -362,12 +471,25 @@ Stories:
                                         "alert_title": {
                                             "type": "string"
                                         },
+                                        "catalyst_type": {
+                                            "type": "string",
+                                            "enum": [
+                                                "POLICY",
+                                                "REGULATION",
+                                                "CONTRACT",
+                                                "TECHNOLOGY",
+                                                "SUPPLY",
+                                                "ENERGY",
+                                                "GEOPOLITICS",
+                                                "COMPETITOR",
+                                                "PARTNERSHIP",
+                                                "OTHER",
+                                            ],
+                                        },
                                         "importance": {
                                             "type": "string",
                                             "enum": [
-                                                "HIGH",
-                                                "MEDIUM",
-                                                "LOW",
+                                                "HIGH"
                                             ],
                                         },
                                         "event": {
@@ -389,23 +511,23 @@ Stories:
                                             "type": "string"
                                         },
                                         "confidence": {
-                                            "type": "string",
-                                            "enum": [
-                                                "HIGH",
-                                                "MEDIUM",
-                                                "LOW",
-                                            ],
+                                            "type": "integer"
+                                        },
+                                        "asymmetric": {
+                                            "type": "boolean"
                                         },
                                     },
                                     "required": [
                                         "story_number",
                                         "alert_title",
+                                        "catalyst_type",
                                         "importance",
                                         "event",
                                         "affected_companies_or_sectors",
                                         "tickers",
                                         "market_relevance",
                                         "confidence",
+                                        "asymmetric",
                                     ],
                                 },
                             }
@@ -424,21 +546,14 @@ Stories:
         except Exception as e:
 
             print(
-                f"Gemini attempt {attempt + 1} failed: {e}"
+                f"Gemini attempt "
+                f"{attempt + 1} failed: {e}"
             )
 
             if attempt < 2:
 
-                wait_time = 5 * (
-                    attempt + 1
-                )
-
-                print(
-                    f"Retrying in {wait_time} seconds..."
-                )
-
                 time.sleep(
-                    wait_time
+                    5 * (attempt + 1)
                 )
 
             else:
@@ -447,18 +562,16 @@ Stories:
 
 
 # ============================================================
-# PRICE / TECHNICAL ANALYSIS
+# TECHNICAL MARKET DATA
 # ============================================================
 
 def get_price_setup(ticker):
 
     try:
 
-        print(
-            f"Getting market data for {ticker}..."
+        stock = yf.Ticker(
+            ticker
         )
-
-        stock = yf.Ticker(ticker)
 
         history = stock.history(
             period="3mo",
@@ -468,63 +581,56 @@ def get_price_setup(ticker):
 
         if history.empty:
 
-            print(
-                f"No market data for {ticker}."
-            )
-
             return None
 
         if len(history) < 20:
 
-            print(
-                f"Not enough market data for {ticker}."
-            )
-
             return None
 
-        current_price = float(
+        current = float(
             history["Close"].iloc[-1]
         )
 
-        recent_20 = history.tail(20)
+        recent = history.tail(
+            20
+        )
 
         support = float(
-            recent_20["Low"].min()
+            recent["Low"].min()
         )
 
         resistance = float(
-            recent_20["High"].max()
+            recent["High"].max()
         )
 
         average_range = float(
             (
-                recent_20["High"]
-                - recent_20["Low"]
+                recent["High"]
+                - recent["Low"]
             ).mean()
         )
 
-        # Technical reference entry zone
         entry_low = support * 1.01
 
         entry_high = min(
-            current_price,
+            current,
             support + average_range,
         )
 
-        # Recent resistance
         target_1 = resistance
 
-        # Simple resistance extension
         target_2 = resistance + (
-            (resistance - support) * 0.5
+            (resistance - support)
+            * 0.5
         )
 
-        # Invalidation below recent support
-        invalidation = support * 0.97
+        invalidation = (
+            support * 0.97
+        )
 
         return {
-            "current_price": round(
-                current_price,
+            "current": round(
+                current,
                 2,
             ),
             "entry_low": round(
@@ -552,42 +658,11 @@ def get_price_setup(ticker):
     except Exception as e:
 
         print(
-            f"Could not get price data for {ticker}: {e}"
+            f"Price data error "
+            f"{ticker}: {e}"
         )
 
         return None
-
-
-# ============================================================
-# FORMAT MARKET SETUP
-# ============================================================
-
-def format_market_setup(ticker):
-
-    setup = get_price_setup(
-        ticker
-    )
-
-    if not setup:
-
-        return (
-            f"{ticker}\n"
-            f"Market data unavailable."
-        )
-
-    return (
-        f"{ticker}\n"
-        f"Current: ${setup['current_price']}\n"
-        f"Entry zone: "
-        f"${setup['entry_low']} - "
-        f"${setup['entry_high']}\n"
-        f"Target 1: "
-        f"${setup['target_1']}\n"
-        f"Target 2: "
-        f"${setup['target_2']}\n"
-        f"Invalidation: "
-        f"${setup['invalidation']}"
-    )
 
 
 # ============================================================
@@ -597,41 +672,77 @@ def format_market_setup(ticker):
 def main():
 
     print(
-        "================================"
-    )
-
-    print(
         "MARKET RADAR STARTED"
     )
 
-    print(
-        "================================"
-    )
+    seen = load_memory()
 
-    # --------------------------------------------------------
-    # COLLECT NEWS
-    # --------------------------------------------------------
+    print(
+        f"Memory contains "
+        f"{len(seen)} stories."
+    )
 
     stories = collect_stories()
 
     print(
-        f"Collected {len(stories)} stories."
+        f"Collected "
+        f"{len(stories)} total stories."
     )
 
-    if not stories:
+    # --------------------------------------------------------
+    # REMOVE ALREADY PROCESSED STORIES
+    # --------------------------------------------------------
+
+    new_stories = []
+
+    for story in stories:
+
+        if story["link"] not in seen:
+
+            new_stories.append(
+                story
+            )
+
+    print(
+        f"Found "
+        f"{len(new_stories)} new stories."
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Mark every retrieved story as processed.
+    # This prevents the same story from triggering repeatedly.
+    # --------------------------------------------------------
+
+    for story in new_stories:
+
+        seen.add(
+            story["link"]
+        )
+
+    save_memory(
+        seen
+    )
+
+    if not new_stories:
 
         print(
-            "No stories found."
+            "No new stories."
         )
 
         return
+
+    # Limit AI workload
+    new_stories = new_stories[
+        :30
+    ]
 
     # --------------------------------------------------------
     # AI FILTER
     # --------------------------------------------------------
 
     analysis = analyze_with_ai(
-        stories
+        new_stories
     )
 
     alerts = analysis.get(
@@ -640,196 +751,241 @@ def main():
     )
 
     print(
-        f"AI selected {len(alerts)} alerts."
+        f"AI returned "
+        f"{len(alerts)} possible alerts."
     )
 
     if not alerts:
 
         print(
-            "No positive market catalysts found."
+            "Nothing meets the alert threshold."
         )
 
         return
 
     # --------------------------------------------------------
-    # SEND ALERTS
+    # STRICT CONFIDENCE CHECK
     # --------------------------------------------------------
 
-    for alert in alerts[:3]:
+    qualified = []
 
-        story_number = alert.get(
-            "story_number"
+    for alert in alerts:
+
+        confidence = alert.get(
+            "confidence",
+            0,
         )
+
+        if confidence >= 90:
+
+            qualified.append(
+                alert
+            )
+
+    if not qualified:
+
+        print(
+            "No alert passed the "
+            "90% confidence threshold."
+        )
+
+        return
+
+    # Only ONE alert per run
+    alert = qualified[0]
+
+    story_number = alert.get(
+        "story_number"
+    )
+
+    if not isinstance(
+        story_number,
+        int,
+    ):
+
+        print(
+            "Invalid story number."
+        )
+
+        return
+
+    if (
+        story_number < 1
+        or story_number > len(
+            new_stories
+        )
+    ):
+
+        print(
+            "Story number out of range."
+        )
+
+        return
+
+    story = new_stories[
+        story_number - 1
+    ]
+
+    # --------------------------------------------------------
+    # TICKERS
+    # --------------------------------------------------------
+
+    tickers = alert.get(
+        "tickers",
+        []
+    )
+
+    valid_tickers = []
+
+    for ticker in tickers:
 
         if not isinstance(
-            story_number,
-            int,
+            ticker,
+            str,
         ):
 
             continue
+
+        ticker = (
+            ticker
+            .strip()
+            .upper()
+        )
 
         if (
-            story_number < 1
-            or story_number > len(stories)
+            ticker
+            and ticker not in valid_tickers
         ):
 
-            continue
-
-        story = stories[
-            story_number - 1
-        ]
-
-        # ----------------------------------------------------
-        # COMPANIES / SECTORS
-        # ----------------------------------------------------
-
-        companies = alert.get(
-            "affected_companies_or_sectors",
-            [],
-        )
-
-        if companies:
-
-            affected = "\n".join(
-                f"• {company}"
-                for company in companies
-            )
-
-        else:
-
-            affected = (
-                "No specific public-company "
-                "beneficiary identified."
-            )
-
-        # ----------------------------------------------------
-        # MARKET SETUPS
-        # ----------------------------------------------------
-
-        tickers = alert.get(
-            "tickers",
-            [],
-        )
-
-        valid_tickers = []
-
-        for ticker in tickers:
-
-            if not isinstance(
-                ticker,
-                str,
-            ):
-
-                continue
-
-            ticker = (
+            valid_tickers.append(
                 ticker
-                .strip()
-                .upper()
             )
 
-            if ticker and ticker not in valid_tickers:
+    # --------------------------------------------------------
+    # MARKET SETUPS
+    # --------------------------------------------------------
 
-                valid_tickers.append(
-                    ticker
-                )
+    setups = []
 
-        if valid_tickers:
+    for ticker in valid_tickers[:3]:
 
-            setups = []
-
-            for ticker in valid_tickers[:5]:
-
-                setups.append(
-                    format_market_setup(
-                        ticker
-                    )
-                )
-
-            market_setup = (
-                "\n\n".join(setups)
-            )
-
-        else:
-
-            market_setup = (
-                "No specific public-company "
-                "technical setup available."
-            )
-
-        # ----------------------------------------------------
-        # SOURCE
-        # ----------------------------------------------------
-
-        source_name = story.get(
-            "source",
-            "Google News",
+        setup = get_price_setup(
+            ticker
         )
 
-        source_text = (
-            f"{source_name}\n"
-            f"{story['link']}"
-        )
+        if setup:
 
-        # ----------------------------------------------------
-        # TELEGRAM MESSAGE
-        # ----------------------------------------------------
-
-        message = (
-            f"🚨 {alert['alert_title']}\n\n"
-
-            f"📰 WHAT HAPPENED\n"
-            f"{alert['event']}\n\n"
-
-            f"🏢 AFFECTED COMPANIES / SECTORS\n"
-            f"{affected}\n\n"
-
-            f"📈 MARKET RELEVANCE\n"
-            f"{alert['market_relevance']}\n\n"
-
-            f"📊 MARKET SETUP\n"
-            f"{market_setup}\n\n"
-
-            f"🎯 CONFIDENCE\n"
-            f"{alert['confidence']}\n\n"
-
-            f"⚡ IMPORTANCE\n"
-            f"{alert['importance']}\n\n"
-
-            f"🔗 SOURCE\n"
-            f"{source_text}\n\n"
-
-            f"⚠️ Technical levels are reference levels "
-            f"based on recent price history, not guarantees."
-        )
-
-        try:
-
-            send_telegram(
-                message
+            setups.append(
+                f"{ticker}: "
+                f"${setup['current']} current | "
+                f"${setup['entry_low']}-"
+                f"${setup['entry_high']} reference entry | "
+                f"${setup['target_1']} T1 | "
+                f"${setup['target_2']} T2 | "
+                f"${setup['invalidation']} invalidation"
             )
 
-        except Exception as e:
+    if setups:
 
-            print(
-                f"Telegram error: {e}"
-            )
+        setup_text = "\n".join(
+            setups
+        )
+
+    else:
+
+        setup_text = (
+            "Market setup unavailable."
+        )
+
+    # --------------------------------------------------------
+    # AFFECTED COMPANIES
+    # --------------------------------------------------------
+
+    companies = alert.get(
+        "affected_companies_or_sectors",
+        []
+    )
+
+    if companies:
+
+        company_text = ", ".join(
+            companies
+        )
+
+    else:
+
+        company_text = (
+            "Not specifically identified."
+        )
+
+    # --------------------------------------------------------
+    # ASYMMETRIC LABEL
+    # --------------------------------------------------------
+
+    asymmetric = alert.get(
+        "asymmetric",
+        False,
+    )
+
+    if asymmetric:
+
+        asymmetric_text = (
+            "\n\nASYMMETRIC CATALYST\n"
+            "Potentially unusually large "
+            "economic impact relative to "
+            "the company's current scale. "
+            "Highly uncertain."
+        )
+
+    else:
+
+        asymmetric_text = ""
+
+    # --------------------------------------------------------
+    # FINAL ALERT
+    # --------------------------------------------------------
+
+    message = (
+        f"{alert['alert_title']}\n\n"
+
+        f"What happened:\n"
+        f"{alert['event']}\n\n"
+
+        f"Affected:\n"
+        f"{company_text}\n\n"
+
+        f"Why it matters:\n"
+        f"{alert['market_relevance']}\n\n"
+
+        f"Market setup:\n"
+        f"{setup_text}\n\n"
+
+        f"Confidence: "
+        f"{alert['confidence']}/100\n"
+
+        f"Type: "
+        f"{alert['catalyst_type']}"
+        f"{asymmetric_text}\n\n"
+
+        f"Source:\n"
+        f"{story['link']}"
+    )
+
+    send_telegram(
+        message
+    )
 
     print(
-        "================================"
+        "Alert sent."
     )
 
     print(
         "MARKET RADAR FINISHED"
     )
 
-    print(
-        "================================"
-    )
-
 
 # ============================================================
-# START
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
